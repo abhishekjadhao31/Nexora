@@ -32,3 +32,8 @@ specialized technical tools such as GitHub or IDEs.
 ## Project Status
 
 🚧 Under Development
+
+
+## Development
+
+This project is being developed collaboratively using Git and GitHub.
