@@ -57,35 +57,37 @@ function App() {
     return <LoadingScreen message="Loading NEXORA workspace..." />;
   }
 
+  const authenticatedUser = user as AppUser;
+
   return (
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/dashboard" replace /> : <AuthScreen onAuthenticated={setUser} />} />
       <Route path="/register" element={user ? <Navigate to="/dashboard" replace /> : <AuthScreen onAuthenticated={setUser} mode="register" />} />
 
       <Route element={<ProtectedRoute user={user} />}>
-        <Route element={<AppLayout user={user} onLogout={() => setUser(null)} />}>
-          <Route path="/dashboard" element={<DashboardPage user={user} />} />
-          <Route path="/projects" element={<ProjectsPage user={user} />} />
-          <Route path="/projects/:projectId" element={<ProjectDetailPage user={user} />} />
-          <Route path="/tasks" element={<TasksPage user={user} />} />
-          <Route path="/tasks/:taskId" element={<TaskDetailPage user={user} />} />
-          <Route path="/github" element={<GitHubPage user={user} />} />
-          <Route path="/notifications" element={<NotificationsPage user={user} />} />
-          <Route path="/profile" element={<ProfilePage user={user} />} />
+        <Route element={<AppLayout user={authenticatedUser} onLogout={() => setUser(null)} />}>
+          <Route path="/dashboard" element={<DashboardPage user={authenticatedUser} />} />
+          <Route path="/projects" element={<ProjectsPage user={authenticatedUser} />} />
+          <Route path="/projects/:projectId" element={<ProjectDetailPage user={authenticatedUser} />} />
+          <Route path="/tasks" element={<TasksPage user={authenticatedUser} />} />
+          <Route path="/tasks/:taskId" element={<TaskDetailPage user={authenticatedUser} />} />
+          <Route path="/github" element={<GitHubPage user={authenticatedUser} />} />
+          <Route path="/notifications" element={<NotificationsPage user={authenticatedUser} />} />
+          <Route path="/profile" element={<ProfilePage user={authenticatedUser} />} />
 
-          <Route element={<RoleRoute allowedRoles={['TEAM_LEADER', 'PROFESSOR']} user={user} />}>
-            <Route path="/supervisor" element={<SupervisorDashboardPage user={user} />} />
-            <Route path="/supervisor/members/:memberId" element={<SupervisorMemberPage user={user} />} />
-            <Route path="/supervisor/evaluations" element={<SupervisorEvaluationPage user={user} />} />
-            <Route path="/supervisor/evaluations/:evaluationId" element={<EvaluationDetailPage user={user} />} />
-            <Route path="/supervisor/reports" element={<ReportsPage user={user} />} />
+          <Route element={<RoleRoute allowedRoles={['TEAM_LEADER', 'PROFESSOR']} user={authenticatedUser} />}>
+            <Route path="/supervisor" element={<SupervisorDashboardPage user={authenticatedUser} />} />
+            <Route path="/supervisor/members/:memberId" element={<SupervisorMemberPage user={authenticatedUser} />} />
+            <Route path="/supervisor/evaluations" element={<SupervisorEvaluationPage user={authenticatedUser} />} />
+            <Route path="/supervisor/evaluations/:evaluationId" element={<EvaluationDetailPage user={authenticatedUser} />} />
+            <Route path="/supervisor/reports" element={<ReportsPage user={authenticatedUser} />} />
           </Route>
 
-          <Route element={<RoleRoute allowedRoles={['PROFESSOR']} user={user} />}>
-            <Route path="/admin" element={<AdminPage user={user} />} />
-            <Route path="/admin/users" element={<AdminUsersPage user={user} />} />
-            <Route path="/admin/projects" element={<AdminProjectsPage user={user} />} />
-            <Route path="/admin/tasks" element={<AdminTasksPage user={user} />} />
+          <Route element={<RoleRoute allowedRoles={['PROFESSOR']} user={authenticatedUser} />}>
+            <Route path="/admin" element={<AdminPage user={authenticatedUser} />} />
+            <Route path="/admin/users" element={<AdminUsersPage user={authenticatedUser} />} />
+            <Route path="/admin/projects" element={<AdminProjectsPage user={authenticatedUser} />} />
+            <Route path="/admin/tasks" element={<AdminTasksPage user={authenticatedUser} />} />
           </Route>
         </Route>
       </Route>

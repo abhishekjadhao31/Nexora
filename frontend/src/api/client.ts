@@ -1,13 +1,78 @@
 import { githubStatus, notifications, projects, tasks, users } from './mockData';
+import type { AppUser, Role } from './types';
 
-const mockMap: Record<string, () => unknown> = {
-  '/auth/me': () => {
-    const stored = localStorage.getItem('nexora_user');
-    if (stored) return JSON.parse(stored);
-    return users[1];
-  },
-  '/auth/login': () => ({ user: users[1], token: 'mock-token-123' }),
-  '/auth/register': () => ({ user: users[1], token: 'mock-token-123' }),
+type MockCredential = AppUser & {
+  password: string;
+};
+
+const mockCredentialsKey = 'nexora_mock_credentials';
+
+function getMockCredentials(): MockCredential[] {
+  const stored = localStorage.getItem(mockCredentialsKey);
+  if (stored) {
+    try {
+      return JSON.parse(stored) as MockCredential[];
+    } catch {
+      localStorage.removeItem(mockCredentialsKey);
+    }
+  }
+
+  const seeded = users.map((user) => ({ ...user, password: 'password123' }));
+  localStorage.setItem(mockCredentialsKey, JSON.stringify(seeded));
+  return seeded;
+}
+
+function saveMockCredentials(credentials: MockCredential[]): void {
+  localStorage.setItem(mockCredentialsKey, JSON.stringify(credentials));
+}
+
+function authenticateMockUser(path: string, options: RequestInit): { user: AppUser; token: string } | AppUser {
+  const credentials = getMockCredentials();
+  const body = options.body ? JSON.parse(String(options.body)) as Record<string, string> : {};
+
+  if (path === '/auth/me') {
+    const storedUser = localStorage.getItem('nexora_user');
+    if (!storedUser) {
+      throw new Error('No active session');
+    }
+    return JSON.parse(storedUser) as AppUser;
+  }
+
+  if (path === '/auth/login') {
+    const email = body.email?.trim().toLowerCase();
+    const account = credentials.find((candidate) => candidate.email.toLowerCase() === email && candidate.password === body.password);
+    if (!account) {
+      throw new Error('Invalid email or password');
+    }
+
+    const { password: _password, ...user } = account;
+    return { user, token: `mock-token-${account.id}` };
+  }
+
+  const email = body.email?.trim().toLowerCase();
+  if (!body.name?.trim() || !email || !body.password || !body.role) {
+    throw new Error('Name, email, password, and role are required');
+  }
+  if (credentials.some((candidate) => candidate.email.toLowerCase() === email)) {
+    throw new Error('An account with this email already exists');
+  }
+
+  const user: AppUser = {
+    id: `u-${Date.now()}`,
+    name: body.name.trim(),
+    email,
+    role: body.role as Role,
+    department: 'New workspace',
+    title: body.role === 'PROFESSOR' ? 'Supervisor' : body.role === 'TEAM_LEADER' ? 'Team Lead' : 'Student',
+  };
+  saveMockCredentials([...credentials, { ...user, password: body.password }]);
+  return { user, token: `mock-token-${user.id}` };
+}
+
+const mockMap: Record<string, (options?: RequestInit) => unknown> = {
+  '/auth/me': (options = {}) => authenticateMockUser('/auth/me', options),
+  '/auth/login': (options = {}) => authenticateMockUser('/auth/login', options),
+  '/auth/register': (options = {}) => authenticateMockUser('/auth/register', options),
   '/projects': () => projects,
   '/notifications': () => notifications,
   '/github/status': () => githubStatus,
@@ -37,7 +102,7 @@ const mockMap: Record<string, () => unknown> = {
 export async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const fallback = mockMap[path];
   if (fallback) {
-    return fallback() as T;
+    return fallback(options) as T;
   }
 
   const token = localStorage.getItem('nexora_token');

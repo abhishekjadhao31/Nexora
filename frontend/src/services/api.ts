@@ -59,7 +59,8 @@ apiClient.interceptors.response.use(
 
 export async function request<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {
   const response = await apiClient.request<T>({ url: path, ...config });
-  return response.data?.data ?? response.data ?? ({} as T);
+  const payload = response.data as T | { data?: T };
+  return (typeof payload === 'object' && payload !== null && 'data' in payload ? payload.data : payload) as T;
 }
 
 export async function get<T>(path: string, config?: AxiosRequestConfig): Promise<T> {
