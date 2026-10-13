@@ -12,12 +12,22 @@ import {
   useParams,
   useSearchParams,
 } from 'react-router-dom';
-import { apiRequest, clearStoredUser, setStoredUser } from './api/client';
-import { memberSummaries, notifications, projects, tasks, users } from './api/mockData';
-import type { AppUser, Evaluation, GitHubStatus, Notification, Project, Report, Task } from './api/types';
+import { apiRequest, clearAuthToken, setAuthToken } from './api/client';
+import { getCurrentUser, login, register } from './services/auth';
+import { getProjectMilestones } from './services/milestones';
+import { MemberPicker } from './components/MemberPicker';
+import { TaskAssignmentForm } from './components/TaskAssignmentForm';
+import type { AppUser, Evaluation, GitHubStatus, Milestone, Notification, Project, ProjectMember, Report, Task } from './api/types';
 import './styles.css';
 
 type AuthMode = 'login' | 'register';
+
+async function loadTasksForProjects(projectList: Project[], assignedToMe = false): Promise<Task[]> {
+  const taskLists = await Promise.all(
+    projectList.map((project) => apiRequest<Task[]>(`/tasks?projectId=${encodeURIComponent(project.id)}${assignedToMe ? '&assignedToMe=true' : ''}`)),
+  );
+  return taskLists.flat();
+}
 
 const roleLabels: Record<AppUser['role'], string> = {
   STUDENT: 'Student',
@@ -25,7 +35,13 @@ const roleLabels: Record<AppUser['role'], string> = {
   PROFESSOR: 'Supervisor',
 };
 
-function App() {
+function formatDateTime(value?: string | null): string {
+  if (!value) return 'Not set';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+export function App() {
   const [user, setUser] = useState<AppUser | null>(null);
   const [ready, setReady] = useState(false);
 
@@ -39,11 +55,10 @@ function App() {
       }
 
       try {
-        const nextUser = await apiRequest<AppUser>('/auth/me');
+        const nextUser = await getCurrentUser();
         setUser(nextUser);
-        setStoredUser(nextUser);
       } catch {
-        clearStoredUser();
+        clearAuthToken();
         setUser(null);
       } finally {
         setReady(true);
@@ -51,6 +66,12 @@ function App() {
     };
 
     void loadCurrentUser();
+  }, []);
+
+  useEffect(() => {
+    const handleUnauthorized = () => setUser(null);
+    window.addEventListener('nexora:unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('nexora:unauthorized', handleUnauthorized);
   }, []);
 
   if (!ready) {
@@ -121,9 +142,8 @@ function AuthScreen({ onAuthenticated, mode: initialMode = 'login' }: { onAuthen
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [form, setForm] = useState({
     name: '',
-    email: 'priya@nexora.dev',
-    password: 'password123',
-    role: 'STUDENT' as AppUser['role'],
+    email: '',
+    password: '',
   });
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -135,15 +155,16 @@ function AuthScreen({ onAuthenticated, mode: initialMode = 'login' }: { onAuthen
     setSubmitting(true);
 
     try {
-      const body = mode === 'login' ? { email: form.email, password: form.password } : form;
-      const result = await apiRequest<{ user: AppUser; token: string }>(`/auth/${mode}`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      });
-
-      localStorage.setItem('nexora_token', result.token);
-      setStoredUser(result.user);
-      onAuthenticated(result.user);
+      const result = mode === 'login'
+        ? await login(form.email, form.password)
+        : await register(form);
+      setAuthToken(result.token);
+      try {
+        onAuthenticated(await getCurrentUser());
+      } catch (currentUserError) {
+        clearAuthToken();
+        throw currentUserError;
+      }
       navigate('/dashboard');
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Unable to authenticate');
@@ -169,20 +190,10 @@ function AuthScreen({ onAuthenticated, mode: initialMode = 'login' }: { onAuthen
         <h2>{mode === 'login' ? 'Welcome back' : 'Start a workspace'}</h2>
 
         {mode === 'register' && (
-          <>
-            <label>
-              Name
-              <input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
-            </label>
-            <label>
-              Role
-              <select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value as AppUser['role'] })}>
-                <option value="STUDENT">Student</option>
-                <option value="TEAM_LEADER">Team leader</option>
-                <option value="PROFESSOR">Supervisor</option>
-              </select>
-            </label>
-          </>
+          <label>
+            Name
+            <input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+          </label>
         )}
 
         <label>
@@ -235,7 +246,7 @@ function AppLayout({ user, onLogout }: { user: AppUser | null; onLogout: () => v
   }, [user]);
 
   const handleLogout = () => {
-    clearStoredUser();
+    clearAuthToken();
     onLogout();
     navigate('/login');
   };
@@ -307,10 +318,8 @@ function DashboardPage({ user }: { user: AppUser }) {
     let active = true;
     const load = async () => {
       try {
-        const [projectsResult, tasksResult] = await Promise.all([
-          apiRequest<Project[]>('/projects'),
-          apiRequest<Task[]>('/tasks'),
-        ]);
+        const projectsResult = await apiRequest<Project[]>('/projects');
+        const tasksResult = await loadTasksForProjects(projectsResult);
         if (!active) return;
         setProjectData(projectsResult);
         setTaskData(tasksResult);
@@ -390,6 +399,8 @@ function ProjectsPage({ user }: { user: AppUser }) {
   const [showCreate, setShowCreate] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [selectedMembers, setSelectedMembers] = useState<ProjectMember[]>([]);
+  const [creatorRole, setCreatorRole] = useState<'LEADER' | 'MEMBER'>('LEADER');
   const navigate = useNavigate();
 
   const loadProjects = async () => {
@@ -422,14 +433,24 @@ function ProjectsPage({ user }: { user: AppUser }) {
       setError('Project name is required.');
       return;
     }
-
     try {
+      const formData = new FormData(form);
       await apiRequest('/projects', {
         method: 'POST',
-        body: JSON.stringify({ name, description, status: 'ACTIVE' }),
+        body: JSON.stringify({
+          name,
+          description,
+          status: 'ACTIVE',
+          startDate: formData.get('startDate') || null,
+          endDate: formData.get('deadline') || null,
+          creatorRole,
+          members: selectedMembers.map((member) => ({ userId: member.id, projectRole: member.projectRole })),
+        }),
       });
       form.reset();
       setShowCreate(false);
+      setSelectedMembers([]);
+      setCreatorRole('LEADER');
       setError('');
       await loadProjects();
     } catch (requestError) {
@@ -462,6 +483,17 @@ function ProjectsPage({ user }: { user: AppUser }) {
               Description
               <textarea name="description" rows={3} placeholder="Describe the project, outcome, and collaboration goals." />
             </label>
+            <div className="full-width">
+              <div className="detail-card compact-card">
+                <strong>Your role in this project</strong>
+                <p>{user.name} / {user.email}</p>
+                <select aria-label="Your role in this project" value={creatorRole} onChange={(event) => setCreatorRole(event.target.value as 'LEADER' | 'MEMBER')}>
+                  <option value="LEADER">Leader</option>
+                  <option value="MEMBER">Member</option>
+                </select>
+              </div>
+              <MemberPicker selected={selectedMembers} onChange={setSelectedMembers} currentUserId={user.id} />
+            </div>
             <label>
               Start date
               <input name="startDate" type="date" />
@@ -515,6 +547,7 @@ function ProjectDetailPage({ user }: { user: AppUser }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [project, setProject] = useState<Project | null>(null);
   const [tasksForProject, setTasksForProject] = useState<Task[]>([]);
+  const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const navigate = useNavigate();
@@ -525,15 +558,14 @@ function ProjectDetailPage({ user }: { user: AppUser }) {
     let active = true;
     const load = async () => {
       try {
-        const [projectList, tasksResult] = await Promise.all([
-          apiRequest<Project[]>('/projects'),
-          apiRequest<Task[]>('/tasks'),
-        ]);
+        const projectResult = projectId ? await apiRequest<Project>(`/projects/${encodeURIComponent(projectId)}`) : null;
+        const tasksResult = projectId ? await apiRequest<Task[]>(`/tasks?projectId=${encodeURIComponent(projectId)}`) : [];
+        const milestoneResult = projectId ? await getProjectMilestones(projectId) : [];
 
         if (!active) return;
-        const nextProject = projectList.find((entry) => entry.id === projectId) ?? null;
-        setProject(nextProject);
+        setProject(projectResult);
         setTasksForProject(tasksResult.filter((task) => task.projectId === projectId));
+        setMilestones(milestoneResult);
       } catch (requestError) {
         if (active) setError(requestError instanceof Error ? requestError.message : 'Unable to load project details');
       } finally {
@@ -555,6 +587,7 @@ function ProjectDetailPage({ user }: { user: AppUser }) {
     { label: 'GitHub', value: 'github' },
     { label: 'Activity', value: 'activity' },
   ];
+  const canManageTasks = project.members?.some((member) => member.id === user.id && member.projectRole === 'LEADER') ?? false;
 
   return (
     <div className="page-content">
@@ -577,17 +610,20 @@ function ProjectDetailPage({ user }: { user: AppUser }) {
       )}
 
       {activeTab === 'tasks' && (
+        <>
+          {canManageTasks && <TaskAssignmentForm projectId={project.id} members={project.members ?? []} milestones={milestones} onCreated={(task) => setTasksForProject((current) => [task, ...current])} />}
         <Panel title="Project tasks" subtitle="Milestone tracking" emptyText="No tasks for this project yet.">
           {tasksForProject.length ? tasksForProject.map((task) => (
             <button key={task.id} type="button" className="task-row" onClick={() => navigate(`/tasks/${task.id}`)}>
               <span className={`task-state ${task.status === 'COMPLETED' ? 'completed' : task.status === 'BLOCKED' ? 'blocked' : ''}`} />
               <span>
                 <strong>{task.title}</strong>
-                <small>{task.status} / {task.priority}</small>
+                <small>{task.assigneeName ?? 'Unassigned'} / {task.status} / {task.priority}</small>
               </span>
             </button>
           )) : null}
         </Panel>
+        </>
       )}
 
       {activeTab === 'members' && (
@@ -597,7 +633,7 @@ function ProjectDetailPage({ user }: { user: AppUser }) {
               <span className="project-mark">{member.name.slice(0, 2).toUpperCase()}</span>
               <span>
                 <strong>{member.name}</strong>
-                <small>{member.role}</small>
+                <small>{member.projectRole} / {member.role}</small>
               </span>
               <b>{member.email}</b>
             </button>
@@ -616,12 +652,7 @@ function ProjectDetailPage({ user }: { user: AppUser }) {
 
       {activeTab === 'activity' && (
         <Panel title="Project activity" subtitle="Transparent updates" emptyText="No recent activity recorded yet.">
-          <div className="timeline-list">
-            <div className="timeline-item"><span>09:20</span><div><strong>Abhishek created task</strong><small>JWT Authentication</small></div></div>
-            <div className="timeline-item"><span>10:15</span><div><strong>Task assigned</strong><small>Priya Raman</small></div></div>
-            <div className="timeline-item"><span>12:30</span><div><strong>GitHub branch created</strong><small>feature/NEX-42-jwt-auth</small></div></div>
-            <div className="timeline-item"><span>16:20</span><div><strong>PR merged</strong><small>#57 Implement JWT Authentication</small></div></div>
-          </div>
+          <EmptyState message="Activity is not connected yet." />
         </Panel>
       )}
     </div>
@@ -641,7 +672,8 @@ function TasksPage({ user }: { user: AppUser }) {
     let active = true;
     const load = async () => {
       try {
-        const data = await apiRequest<Task[]>('/tasks');
+        const projectList = await apiRequest<Project[]>('/projects');
+        const data = await loadTasksForProjects(projectList, true);
         if (!active) return;
         setTaskData(data);
       } catch (requestError) {
@@ -655,7 +687,7 @@ function TasksPage({ user }: { user: AppUser }) {
     return () => { active = false; };
   }, []);
 
-  const filtered = taskData.filter((task) => {
+  const filtered = taskData.filter((task) => task.assignedTo === user.id).filter((task) => {
     const matchesSearch = task.title.toLowerCase().includes(search.toLowerCase()) || (task.projectName ?? '').toLowerCase().includes(search.toLowerCase());
     const matchesStatus = status === 'All' || task.status === status;
     const matchesPriority = priority === 'All' || task.priority === priority;
@@ -732,7 +764,8 @@ function TaskDetailPage({ user }: { user: AppUser }) {
     let active = true;
     const load = async () => {
       try {
-        const tasksResult = await apiRequest<Task[]>('/tasks');
+        const projectList = await apiRequest<Project[]>('/projects');
+        const tasksResult = await loadTasksForProjects(projectList);
         const selectedTask = tasksResult.find((entry) => entry.id === taskId) ?? null;
         if (!active) return;
         setTask(selectedTask);
@@ -773,39 +806,44 @@ function TaskDetailPage({ user }: { user: AppUser }) {
   if (loading) return <LoadingState label="Loading task details..." />;
   if (!task) return <EmptyState message="Task not found." />;
 
+  const canExecute = task.assignedTo === user.id;
+
   return (
     <div className="page-content">
       <PageHeader eyebrow="TASK" title={task.title} action={<button className="secondary-button" type="button" onClick={() => navigate('/tasks')}>← Back</button>} />
       {error && <Alert message={error} />}
 
-      <div className="detail-actions">
-        <button type="button" className="primary-button compact" onClick={() => void completeTask()}>Mark complete</button>
-        <button type="button" className="secondary-button compact" onClick={() => void updateStatus('IN_PROGRESS')}>Start work</button>
-        <button type="button" className="secondary-button compact" onClick={() => void updateStatus('BLOCKED')}>Mark blocked</button>
-      </div>
+      {canExecute ? (
+        <div className="detail-actions">
+          <button type="button" className="primary-button compact" onClick={() => void completeTask()}>Mark complete</button>
+          <button type="button" className="secondary-button compact" onClick={() => void updateStatus('IN_PROGRESS')}>Start work</button>
+          <button type="button" className="secondary-button compact" onClick={() => void updateStatus('BLOCKED')}>Mark blocked</button>
+        </div>
+      ) : <p className="empty-state">Read-only monitoring view. Execution actions are available to the assigned member.</p>}
 
       <div className="detail-card">
         <p><strong>Project:</strong> {task.projectName ?? 'Not linked'}</p>
-        <p><strong>Assignee:</strong> {task.assigneeName ?? 'Unassigned'}</p>
+        <p><strong>Assignee:</strong> {task.assigneeName ? `${task.assigneeName}${task.assigneeEmail ? ` (${task.assigneeEmail})` : ''}` : 'Unassigned'}</p>
         <p><strong>Status:</strong> {task.status}</p>
         <p><strong>Priority:</strong> {task.priority}</p>
-        <p><strong>Deadline:</strong> {task.deadline ?? 'Not set'}</p>
-        <p><strong>Created:</strong> {task.createdAt ?? '—'}</p>
-        <p><strong>Updated:</strong> {task.updatedAt ?? '—'}</p>
+        <p><strong>Deadline:</strong> {formatDateTime(task.deadline)}</p>
+        <p><strong>Milestone:</strong> {task.milestoneName ?? (task.milestoneId ?? 'Not assigned')}</p>
+        <p><strong>Created:</strong> {formatDateTime(task.createdAt)}</p>
+        <p><strong>Updated:</strong> {formatDateTime(task.updatedAt)}</p>
         <p><strong>Description:</strong> {task.description || 'No description added yet.'}</p>
       </div>
 
       <div className="detail-card github-card">
         <h3>GitHub activity</h3>
         <div className="list-two-col">
-          <span>Repository</span><strong>{task.projectName ? 'nexora/web-services' : 'Not connected'}</strong>
-          <span>Branch</span><strong>{task.githubBranch ?? 'feature/NEX-42-jwt-auth'}</strong>
-          <span>Commits</span><strong>{task.linkedCommits ?? 4}</strong>
-          <span>Pull request</span><strong>{task.linkedPr ?? '#57'}</strong>
-          <span>Files changed</span><strong>{task.filesChanged ?? 12}</strong>
-          <span>Additions</span><strong>{task.additions ?? 214}</strong>
-          <span>Deletions</span><strong>{task.deletions ?? 31}</strong>
-          <span>Last activity</span><strong>{task.updatedAt ?? '2026-09-23'}</strong>
+          <span>Repository</span><strong>Not connected</strong>
+          <span>Branch</span><strong>{task.githubBranch ?? 'Not connected'}</strong>
+          <span>Commits</span><strong>{task.linkedCommits ?? 'Not connected'}</strong>
+          <span>Pull request</span><strong>{task.linkedPr ?? 'Not connected'}</strong>
+          <span>Files changed</span><strong>{task.filesChanged ?? 'Not connected'}</strong>
+          <span>Additions</span><strong>{task.additions ?? 'Not connected'}</strong>
+          <span>Deletions</span><strong>{task.deletions ?? 'Not connected'}</strong>
+          <span>Last activity</span><strong>{task.updatedAt ?? 'Not connected'}</strong>
         </div>
       </div>
     </div>
@@ -847,8 +885,8 @@ function GitHubPage({ user }: { user: AppUser }) {
         <p><strong>Username:</strong> {status?.username ? `@${status.username}` : 'Not connected'}</p>
         <p><strong>Repository:</strong> {status?.owner && status?.repository ? `${status.owner}/${status.repository}` : 'Not linked'}</p>
         <div className="detail-actions">
-          <button type="button" className="primary-button compact">Connect GitHub</button>
-          <button type="button" className="secondary-button compact">Sync GitHub</button>
+          <button type="button" className="primary-button compact" disabled>GitHub unavailable</button>
+          <button type="button" className="secondary-button compact" disabled>Sync unavailable</button>
         </div>
       </div>
 
@@ -871,7 +909,7 @@ function NotificationsPage({ user }: { user: AppUser }) {
         const data = await apiRequest<Notification[]>('/notifications');
         setItems(data);
       } catch {
-        setItems(notifications);
+        setItems([]);
       } finally {
         setLoading(false);
       }
@@ -893,7 +931,7 @@ function NotificationsPage({ user }: { user: AppUser }) {
 
   return (
     <div className="page-content">
-      <PageHeader eyebrow="NOTIFICATIONS" title="Latest project updates." action={<button className="secondary-button compact" type="button">Mark all as read</button>} />
+      <PageHeader eyebrow="NOTIFICATIONS" title="Latest project updates." action={<button className="secondary-button compact" type="button" disabled>Mark all unavailable</button>} />
       <div className="detail-card compact-card"><strong>{unread}</strong> unread notifications</div>
       {loading ? <LoadingState label="Loading notifications..." /> : (
         <Panel title="Inbox" subtitle="All messages" emptyText="You are all caught up.">
@@ -924,123 +962,56 @@ function ProfilePage({ user }: { user: AppUser }) {
         <p><strong>Email:</strong> {user.email}</p>
         <p><strong>Role:</strong> {roleLabels[user.role]}</p>
         <p><strong>GitHub:</strong> {user.githubUsername ? `@${user.githubUsername}` : 'Not connected'}</p>
-        <p><strong>Projects:</strong> {projects.length}</p>
-        <p><strong>Activity:</strong> {tasks.length} tracked tasks</p>
+        <p><strong>Projects:</strong> Not connected</p>
+        <p><strong>Activity:</strong> Not connected</p>
       </div>
     </div>
   );
 }
 
 function SupervisorDashboardPage({ user }: { user: AppUser }) {
-  const stats = useMemo(() => ({
-    projects: projects.length,
-    members: users.length,
-    tasks: tasks.length,
-    completedTasks: tasks.filter((task) => task.status === 'COMPLETED').length,
-  }), []);
-
-  const navigate = useNavigate();
-
   return (
     <div className="page-content">
       <PageHeader eyebrow="SUPERVISOR OVERVIEW" title="Team contribution at a glance." />
       <div className="metric-grid">
-        <StatCard label="Total projects" value={String(stats.projects)} meta="active" />
-        <StatCard label="Total members" value={String(stats.members)} meta="registered" />
-        <StatCard label="Tasks" value={String(stats.tasks)} meta={`${stats.completedTasks} complete`} />
+        <StatCard label="Total projects" value="Not connected" meta="unavailable" />
+        <StatCard label="Total members" value="Not connected" meta="unavailable" />
+        <StatCard label="Tasks" value="Not connected" meta="unavailable" />
       </div>
-      <Panel title="Member contribution" subtitle="Progress and evidence" emptyText="No contribution data yet.">
-        {memberSummaries.map((member) => (
-          <button key={member.id} type="button" className="project-row" onClick={() => navigate(`/supervisor/members/${member.id}`)}>
-            <span className="project-mark">{member.name.slice(0, 2).toUpperCase()}</span>
-            <span>
-              <strong>{member.name}</strong>
-              <small>{member.completionRate}% completion</small>
-            </span>
-            <b>{member.commits} commits</b>
-          </button>
-        ))}
+      <Panel title="Member contribution" subtitle="Progress and evidence">
+        <EmptyState message="Member contribution data is not connected yet." />
       </Panel>
     </div>
   );
 }
 
 function SupervisorMemberPage({ user }: { user: AppUser }) {
-  const { memberId } = useParams();
   const navigate = useNavigate();
-  const member = users.find((entry) => entry.id === memberId) ?? null;
-
-  if (!member) return <EmptyState message="Member not found." />;
 
   return (
     <div className="page-content">
-      <PageHeader eyebrow="MEMBER" title={member.name} action={<button className="secondary-button" type="button" onClick={() => navigate('/supervisor')}>← Back</button>} />
-      <div className="detail-card">
-        <p><strong>Role:</strong> {roleLabels[member.role]}</p>
-        <p><strong>Projects:</strong> {projects.length}</p>
-        <p><strong>Completed tasks:</strong> 5</p>
-        <p><strong>Pending tasks:</strong> 2</p>
-        <p><strong>GitHub contributions:</strong> 18 commits / 4 PRs</p>
-      </div>
+      <PageHeader eyebrow="MEMBER" title="Member details unavailable" action={<button className="secondary-button" type="button" onClick={() => navigate('/supervisor')}>← Back</button>} />
+      <EmptyState message="Member and contribution data is not connected yet." />
     </div>
   );
 }
 
 function SupervisorEvaluationPage({ user }: { user: AppUser }) {
-  const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    void apiRequest<Evaluation[]>('/evaluations').then(setEvaluations).catch(() => setEvaluations([]));
-  }, []);
-
   return (
     <div className="page-content">
       <PageHeader eyebrow="EVALUATIONS" title="Member evidence and scoring." />
-      <Panel title="Evaluation list" subtitle="Draft and submitted reviews" emptyText="No evaluations created yet.">
-        {evaluations.length ? evaluations.map((evaluation) => (
-          <button key={evaluation.id} type="button" className="project-row" onClick={() => navigate(`/supervisor/evaluations/${evaluation.id}`)}>
-            <span className="project-mark">{evaluation.memberName.slice(0, 2).toUpperCase()}</span>
-            <span>
-              <strong>{evaluation.memberName}</strong>
-              <small>{evaluation.status}</small>
-            </span>
-            <b>{evaluation.taskCompletion}%</b>
-          </button>
-        )) : null}
-      </Panel>
+      <EmptyState message="Evaluation data is not connected yet." />
     </div>
   );
 }
 
 function EvaluationDetailPage({ user }: { user: AppUser }) {
-  const { evaluationId } = useParams();
   const navigate = useNavigate();
-  const [details, setDetails] = useState<Evaluation | null>(null);
-
-  useEffect(() => {
-    void apiRequest<Evaluation[]>('/evaluations').then((results) => {
-      setDetails(results.find((entry) => entry.id === evaluationId) ?? null);
-    }).catch(() => setDetails(null));
-  }, [evaluationId]);
-
-  if (!details) return <EmptyState message="Evaluation not found." />;
 
   return (
     <div className="page-content">
-      <PageHeader eyebrow="EVALUATION" title={`${details.memberName} review`} action={<button className="secondary-button" type="button" onClick={() => navigate('/supervisor/evaluations')}>← Back</button>} />
-      <div className="detail-card">
-        <p><strong>Task completion:</strong> {details.taskCompletion}</p>
-        <p><strong>Timeliness:</strong> {details.timeliness}</p>
-        <p><strong>Code quality:</strong> {details.codeQuality}</p>
-        <p><strong>Team contribution:</strong> {details.teamContribution}</p>
-        <p><strong>Communication:</strong> {details.communication}</p>
-        <p><strong>Comments:</strong> {details.comments}</p>
-        <div className="detail-actions">
-          <button type="button" className="secondary-button compact">Save draft</button>
-          <button type="button" className="primary-button compact">Submit evaluation</button>
-        </div>
-      </div>
+      <PageHeader eyebrow="EVALUATION" title="Evaluation unavailable" action={<button className="secondary-button" type="button" onClick={() => navigate('/supervisor/evaluations')}>← Back</button>} />
+      <EmptyState message="Evaluation data is not connected yet." />
     </div>
   );
 }
@@ -1054,7 +1025,7 @@ function ReportsPage({ user }: { user: AppUser }) {
 
   return (
     <div className="page-content">
-      <PageHeader eyebrow="REPORTS" title="Progress and contribution snapshots." action={<button className="primary-button compact" type="button">Export report</button>} />
+      <PageHeader eyebrow="REPORTS" title="Progress and contribution snapshots." action={<button className="primary-button compact" type="button" disabled>Export unavailable</button>} />
       <div className="card-grid">
         {reports.length ? reports.map((report) => (
           <div key={report.id} className="report-card">
@@ -1092,18 +1063,7 @@ function AdminUsersPage({ user }: { user: AppUser }) {
   return (
     <div className="page-content">
       <PageHeader eyebrow="ADMIN / USERS" title="Manage people and roles." />
-      <Panel title="Users" emptyText="No users available.">
-        {users.map((entry) => (
-          <div key={entry.id} className="project-row">
-            <span className="project-mark">{entry.name.slice(0, 2).toUpperCase()}</span>
-            <span>
-              <strong>{entry.name}</strong>
-              <small>{entry.role}</small>
-            </span>
-            <b>{entry.email}</b>
-          </div>
-        ))}
-      </Panel>
+      <EmptyState message="User administration is not connected yet." />
     </div>
   );
 }
@@ -1112,18 +1072,7 @@ function AdminProjectsPage({ user }: { user: AppUser }) {
   return (
     <div className="page-content">
       <PageHeader eyebrow="ADMIN / PROJECTS" title="Platform-wide project oversight." />
-      <Panel title="Projects" emptyText="No projects available.">
-        {projects.map((project) => (
-          <div key={project.id} className="project-row">
-            <span className="project-mark">{project.name.slice(0, 2).toUpperCase()}</span>
-            <span>
-              <strong>{project.name}</strong>
-              <small>{project.status}</small>
-            </span>
-            <b>{project.progress ?? 0}%</b>
-          </div>
-        ))}
-      </Panel>
+      <EmptyState message="Platform-wide project oversight is not connected yet." />
     </div>
   );
 }
@@ -1132,18 +1081,7 @@ function AdminTasksPage({ user }: { user: AppUser }) {
   return (
     <div className="page-content">
       <PageHeader eyebrow="ADMIN / TASKS" title="Cross-team execution overview." />
-      <Panel title="Tasks" emptyText="No tasks available.">
-        {tasks.map((task) => (
-          <div key={task.id} className="task-row">
-            <span className={`task-state ${task.status === 'COMPLETED' ? 'completed' : task.status === 'BLOCKED' ? 'blocked' : ''}`} />
-            <span>
-              <strong>{task.title}</strong>
-              <small>{task.status} / {task.priority}</small>
-            </span>
-            <b>{task.assigneeName ?? 'Unassigned'}</b>
-          </div>
-        ))}
-      </Panel>
+      <EmptyState message="Cross-team task oversight is not connected yet." />
     </div>
   );
 }
@@ -1205,8 +1143,11 @@ function LoadingScreen({ message }: { message: string }) {
   );
 }
 
-createRoot(document.getElementById('root')!).render(
-  <BrowserRouter>
-    <App />
-  </BrowserRouter>,
-);
+const rootElement = document.getElementById('root');
+if (rootElement) {
+  createRoot(rootElement).render(
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>,
+  );
+}

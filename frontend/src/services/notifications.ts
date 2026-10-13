@@ -1,5 +1,5 @@
 import type { Notification } from '../api/types';
-import { get, patch } from './api';
+import { get, patch } from '../api/client';
 
 export async function getNotifications(): Promise<Notification[]> {
   return get<Notification[]>('/notifications');

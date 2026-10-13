@@ -1,9 +1,5 @@
 import type { Evaluation } from '../api/types';
-import { get, post } from './api';
-
-export async function getEvaluations(): Promise<Evaluation[]> {
-  return get<Evaluation[]>('/evaluations');
-}
+import { get, post } from '../api/client';
 
 export async function getProjectEvaluations(projectId: string): Promise<Evaluation[]> {
   return get<Evaluation[]>(`/evaluations/project/${projectId}`);

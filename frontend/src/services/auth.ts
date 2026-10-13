@@ -1,5 +1,5 @@
 import type { AppUser } from '../api/types';
-import { post } from './api';
+import { get, post } from '../api/client';
 
 export type AuthResponse = {
   user: AppUser;
@@ -10,10 +10,10 @@ export async function login(email: string, password: string): Promise<AuthRespon
   return post<AuthResponse>('/auth/login', { email, password });
 }
 
-export async function register(input: { name: string; email: string; password: string; role: AppUser['role'] }): Promise<AuthResponse> {
-  return post<AuthResponse>('/auth/register', input);
+export async function register(input: { name: string; email: string; password: string }): Promise<AuthResponse> {
+  return post<AuthResponse>('/auth/register', { ...input, role: 'STUDENT' });
 }
 
 export async function getCurrentUser(): Promise<AppUser> {
-  return post<AppUser>('/auth/me');
+  return get<AppUser>('/auth/me');
 }

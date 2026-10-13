@@ -15,12 +15,14 @@ export type AppUser = {
 export type ProjectStatus = 'PLANNING' | 'ACTIVE' | 'ON_HOLD' | 'COMPLETED' | 'ARCHIVED';
 export type TaskStatus = 'TO_DO' | 'IN_PROGRESS' | 'COMPLETED' | 'BLOCKED';
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+export type MilestoneStatus = 'PLANNING' | 'ACTIVE' | 'COMPLETED';
 
 export type ProjectMember = {
   id: string;
   name: string;
   email: string;
   role: Role;
+  projectRole: 'LEADER' | 'MEMBER';
   avatar?: string;
 };
 
@@ -29,8 +31,8 @@ export type Project = {
   name: string;
   description: string;
   status: ProjectStatus;
-  startDate?: string;
-  endDate?: string;
+  startDate?: string | null;
+  endDate?: string | null;
   deadline?: string;
   repository?: string;
   ownerId?: string;
@@ -41,7 +43,10 @@ export type Project = {
   progress?: number;
   createdAt?: string;
   updatedAt?: string;
+  createdBy?: string;
 };
+
+export type UserSearchResult = Pick<AppUser, 'id' | 'name' | 'email' | 'role'>;
 
 export type Task = {
   id: string;
@@ -51,13 +56,16 @@ export type Task = {
   description: string;
   status: TaskStatus;
   priority: TaskPriority;
-  assignedTo?: string;
+  assignedTo: string | null;
   assigneeName?: string;
-  createdBy?: string;
+  assigneeEmail?: string;
+  createdBy: string;
   createdAt?: string;
   updatedAt?: string;
   deadline?: string;
-  completedAt?: string;
+  completedAt: string | null;
+  milestoneId: string | null;
+  milestoneName?: string;
   githubBranch?: string;
   linkedPr?: string;
   linkedCommits?: number;
@@ -74,6 +82,21 @@ export type Notification = {
   createdAt: string;
   type?: string;
   actionUrl?: string;
+};
+
+export type Milestone = {
+  id: string;
+  projectId: string;
+  name: string;
+  description: string;
+  startDate: string | null;
+  deadline: string | null;
+  status: MilestoneStatus;
+  totalTasks: number;
+  completedTasks: number;
+  completion: number;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type ActivityItem = {
@@ -98,16 +121,13 @@ export type GitHubStatus = {
 export type Evaluation = {
   id: string;
   projectId: string;
-  memberId: string;
-  memberName: string;
-  taskCompletion: number;
-  timeliness: number;
-  codeQuality: number;
-  teamContribution: number;
-  communication: number;
+  studentId: string;
+  professorId: string;
+  score: number;
   comments: string;
-  status: 'DRAFT' | 'SUBMITTED';
-  submittedAt?: string;
+  createdAt: string;
+  studentName?: string;
+  professorName?: string;
 };
 
 export type Report = {

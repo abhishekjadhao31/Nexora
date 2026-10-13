@@ -1,5 +1,5 @@
 import type { GitHubStatus } from '../api/types';
-import { get } from './api';
+import { get } from '../api/client';
 
 export type GitHubContributionSummary = {
   commits: number;
