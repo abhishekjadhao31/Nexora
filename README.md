@@ -1,34 +1,237 @@
-# Nexora
+# Nexora --- Project Management & Collaboration Platform
 
-Nexora is a web-based project organization and collaboration platform.
+A web-based project management platform that helps project leaders, team
+members, and supervisors organize projects, assign tasks, manage
+milestones, share resources, track progress, and stay informed through
+notifications.
 
-## Project Overview
-
-Nexora provides a centralized workspace for managing projects, teams, tasks,
-milestones, task resources, task deliverables, and overall project progress.
-
-The platform focuses on project organization and coordination without replacing
-specialized technical tools such as GitHub or IDEs.
-
-## Technology Stack
-
-- Frontend: React.js
-- Backend: Node.js + Express.js
-- Database: MySQL
-- Communication: REST APIs
-- Authentication: JWT
-
-## Core Roles
-
-- Project Owner
-- Team Member
-- Supervisor / Manager
+Nexora is a full-stack web application built with a vanilla JavaScript
+frontend, a Node.js/Express REST API, and a MySQL database.
 
 ## Team
 
-- Member A
-- Member B
+| No. | Team Member | Roll Number |
+|---:|---|---|
+| 1 | Mahi Verma | 20252651032 |
+| 2 | Subham Kumar Mohanty | 20252651057 |
+| 3 | Abhishek Jadhao | 20252651003 |
+| 4 | Harsh N Shende | 20252651023 |
+| 5 | Rishabh Mishra | 20252651041 |
 
-## Project Status
+## What's in this repo
 
-🚧 Under Development
+``` text
+nexora/
+├── backend/
+│   ├── src/
+│   │   ├── routes/             # REST API routes
+│   │   ├── utils/              # Shared helpers, including notifications
+│   │   └── server.js           # Express application entry point
+│   ├── .env                    # Local environment configuration (not committed)
+│   ├── package.json
+│   └── ...
+├── index.html                  # Frontend entry point
+├── script.js                   # Frontend rendering, interactions, and API calls
+├── styles.css                  # Frontend styling
+└── README.md
+```
+
+*This is a representative overview of the main files; update it if the
+final repository structure differs.*
+
+## Main features
+
+-   **Authentication:** Register and log in using an email address and
+    password.
+-   **Nexora ID:** Each account receives a unique Nexora ID used to
+    identify users when adding them to projects.
+-   **Project management:** Create and view projects, descriptions,
+    start dates, deadlines, and statuses.
+-   **Team management:** Add project members and assign roles such as
+    Leader, Member, and Supervisor.
+-   **Task management:** Create and view tasks, assign responsibilities,
+    update progress, and manage deadlines.
+-   **Milestone management:** Organize project work around milestones.
+-   **Resource management:** Attach useful resources and reference links
+    to projects.
+-   **Deliverables:** Track project deliverables.
+-   **Comments:** Support discussion and collaboration around task work.
+-   **Notifications:** Notify users about relevant events, including
+    membership changes, task assignments, and deadline updates.
+-   **Progress tracking:** Review project activity and deadlines from
+    the dashboard.
+
+## Technology stack
+
+  Layer               Technology
+  ------------------- -----------------------
+  Frontend            HTML, CSS, JavaScript
+  Backend             Node.js, Express.js
+  Database            MySQL
+  Authentication      JSON Web Tokens (JWT)
+  Password security   bcrypt
+  API style           REST
+
+## Running it locally
+
+### Prerequisites
+
+-   Node.js and npm
+-   MySQL Server
+-   A modern web browser
+-   Visual Studio Code (recommended)
+
+### 1. Set up the database
+
+Start MySQL and create the database:
+
+``` sql
+CREATE DATABASE nexora_db
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+```
+
+Configure the database connection in the backend environment file.
+Ensure the required Nexora tables have been created. If the repository
+includes a schema or migration file, use it to create the tables.
+
+### 2. Configure and start the backend
+
+Open a terminal in the backend directory:
+
+``` powershell
+cd backend
+npm install
+```
+
+Create a `.env` file inside `backend/` and add your local configuration.
+Example:
+
+``` env
+PORT=5000
+FRONTEND_URL=http://127.0.0.1:5500
+
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=your_mysql_username
+DB_PASSWORD=your_mysql_password
+DB_NAME=nexora_db
+
+JWT_SECRET=replace_with_a_long_random_secret
+JWT_EXPIRES_IN=1h
+```
+
+Use the exact variable names expected by the backend configuration. Do
+not commit `.env`, database passwords, or JWT secrets to Git.
+
+Start the backend:
+
+``` powershell
+npm run dev
+```
+
+The API runs at `http://localhost:5000`.
+
+### 3. Run the frontend
+
+From the repository root, open `index.html` using the VS Code Live
+Server extension or another local static web server.
+
+With Live Server, the frontend is expected at `http://127.0.0.1:5500`.
+
+Make sure the frontend API base URL and the backend CORS configuration
+match the addresses you are using.
+
+## API overview
+
+The backend exposes REST endpoints under `/api`.
+
+  --------------------------------------------------------------------------------------------------
+  Area                    Example endpoints                                  Purpose
+  ----------------------- -------------------------------------------------- -----------------------
+  Authentication          `POST /api/auth/register`, `POST /api/auth/login`  Register and log in
+
+  User profile            `GET /api/users/me`                                Retrieve the
+                                                                             authenticated user's
+                                                                             profile
+
+  Projects                `GET /api/projects`, `POST /api/projects`,         Create and retrieve
+                          `GET /api/projects/:id`                            projects
+
+  Project members         `/api/projects/:id/members`                        Add, list, update, or
+                                                                             remove project members
+
+  Tasks                   `/api/projects/:id/tasks`                          Create and list project
+                                                                             tasks
+
+  Task progress           `PATCH /api/projects/:id/tasks/:taskId/progress`   Update task progress
+
+  Task deadline           `PATCH /api/projects/:id/tasks/:taskId/deadline`   Change a task deadline
+
+  Milestones              `/api/projects/:id/milestones`                     Manage project
+                                                                             milestones
+
+  Resources               `/api/projects/:id/resources`                      Manage project
+                                                                             resources
+
+  Deliverables            `/api/projects/:id/deliverables`                   Manage project
+                                                                             deliverables
+
+  Comments                `/api/projects/:id/tasks/:taskId/comments`         Collaborate through
+                                                                             task comments
+
+  Notifications           `/api/notifications`                               Retrieve and manage
+                                                                             notifications
+  --------------------------------------------------------------------------------------------------
+
+Protected endpoints require a valid JWT in the request header:
+
+``` http
+Authorization: Bearer <your_token>
+```
+
+Refer to the backend implementation for each endpoint's exact request
+body and response format.
+
+## Using Nexora
+
+1.  Register an account or log in with your email and password.
+2.  Create a project or open a project you belong to.
+3.  Add team members using their Nexora IDs and assign appropriate
+    roles.
+4.  Create tasks, assign responsibilities, and set deadlines.
+5.  Define milestones, attach resources, and manage deliverables.
+6.  Update task progress and use comments to coordinate work.
+7.  Review dashboard summaries, deadlines, and notifications.
+
+## Testing and troubleshooting
+
+-   Confirm MySQL is running and the credentials in `.env` are correct.
+-   Start the backend from the `backend/` directory.
+-   Confirm the API is available at `http://localhost:5000`.
+-   Confirm the frontend is served from the URL configured in
+    `FRONTEND_URL`.
+-   If a protected endpoint returns `401 Unauthorized`, log in again and
+    verify that the frontend sends the JWT in the `Authorization`
+    header.
+-   Use the browser Developer Tools **Console** and **Network** tabs to
+    inspect frontend errors and API request status codes.
+-   Check the backend terminal for server errors and database connection
+    issues.
+
+## Security notes
+
+-   Keep `.env` out of version control.
+-   Use a strong, unique `JWT_SECRET` outside local development.
+-   Hash passwords before storing them; never store plaintext passwords.
+-   Validate input and enforce authorization on the backend, not only in
+    the frontend.
+-   Use HTTPS and suitable production configuration before deploying the
+    application.
+
+## Project overview
+
+Nexora is a project management and collaboration platform for academic
+and team projects. It brings authentication, project organization, task
+tracking, team roles, milestones, resources, deliverables, comments, and
+notifications into one place.
