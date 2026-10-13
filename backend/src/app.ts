@@ -18,6 +18,7 @@ import { notificationRouter } from './notification-routes.js';
 import { evaluationRouter } from './evaluation-routes.js';
 import { rateLimit } from './middleware/rate-limit.js';
 import { graphqlMiddleware } from './graphql.js';
+import { userRouter } from './user-routes.js';
 
 export const app = express();
 const require = createRequire(import.meta.url);
@@ -33,13 +34,14 @@ app.use((request, response, next) => {
   response.setHeader('X-Correlation-ID', correlationId);
   next();
 });
-app.use(pinoHttp({ logger }));
+app.use(pinoHttp({ logger, redact: ['req.headers.authorization', 'req.headers.cookie'] }));
 app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/projects', projectRouter);
 app.use('/api/v1/tasks', taskRouter);
 app.use('/api/v1/milestones', milestoneRouter);
 app.use('/api/v1/notifications', notificationRouter);
 app.use('/api/v1/evaluations', evaluationRouter);
+app.use('/api/v1/users', userRouter);
 app.use('/graphql', graphqlMiddleware);
 
 const openApiPath = resolve(process.cwd(), '../docs/openapi.yaml');
@@ -56,6 +58,17 @@ app.get('/api/v1/health', (_request, response) => {
 
 const errorHandler: ErrorRequestHandler = (error, request, response, _next) => {
   logger.error({ err: error }, 'Unhandled request error');
+  if (error instanceof SyntaxError && 'body' in error) {
+    response.status(400).json({
+      error: {
+        code: 'MALFORMED_JSON',
+        message: 'The request body must contain valid JSON',
+        status: 400,
+        correlationId: response.getHeader('X-Correlation-ID')
+      }
+    });
+    return;
+  }
   if (error instanceof AppError) {
     response.status(error.status).json({
       error: {

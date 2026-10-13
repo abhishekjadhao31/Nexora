@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticateToken, issueToken, loginUser, registerUser, validateLogin, validateRegister } from './auth.js';
+import { authenticateToken, issueToken, loadCurrentUser, loginUser, registerUser, validateLogin, validateRegister } from './auth.js';
 
 export const authRouter = Router();
 
@@ -22,9 +22,10 @@ authRouter.post('/login', async (request, response, next) => {
   }
 });
 
-authRouter.get('/me', (request, response, next) => {
+authRouter.get('/me', async (request, response, next) => {
   try {
-    response.json({ data: authenticateToken(request.header('authorization')) });
+    const tokenUser = authenticateToken(request.header('authorization'));
+    response.json({ data: await loadCurrentUser(tokenUser.id) });
   } catch (error) {
     next(error);
   }

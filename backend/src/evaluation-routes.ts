@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { getDatabase } from './database.js';
 import { AppError } from './errors.js';
 import { getRequestUser, requireAuth, requireRole } from './middleware/auth-middleware.js';
+import { mapEvaluation } from './dtos.js';
+import { optionalString, requireBody, requireUuid } from './validation.js';
 
 export const evaluationRouter = Router();
 evaluationRouter.use(requireAuth);
@@ -14,16 +16,16 @@ async function assertProjectMember(projectId: string, userId: string): Promise<v
 evaluationRouter.get('/project/:projectId', async (request, response, next) => {
   try {
     const user = getRequestUser(request);
-    const projectId = String(request.params.projectId);
+    const projectId = requireUuid(request.params.projectId, 'projectId');
     await assertProjectMember(projectId, user.id);
     const result = await getDatabase().query(
       `SELECT e.id, e.project_id, e.student_id, e.professor_id, e.score, e.comments, e.created_at,
               student.name AS student_name, professor.name AS professor_name
        FROM evaluations e JOIN users student ON student.id = e.student_id JOIN users professor ON professor.id = e.professor_id
        WHERE e.project_id = $1 ORDER BY e.created_at DESC`,
-      [request.params.projectId]
+      [projectId]
     );
-    response.json({ data: result.rows });
+    response.json({ data: result.rows.map(mapEvaluation) });
   } catch (error) {
     next(error);
   }
@@ -32,9 +34,12 @@ evaluationRouter.get('/project/:projectId', async (request, response, next) => {
 evaluationRouter.post('/project/:projectId', requireRole('PROFESSOR'), async (request, response, next) => {
   try {
     const user = getRequestUser(request);
-    const projectId = String(request.params.projectId);
-    const { studentId, score, comments = '' } = request.body ?? {};
-    if (typeof studentId !== 'string' || typeof score !== 'number' || score < 0 || score > 10) throw new AppError(422, 'VALIDATION_ERROR', 'studentId and a score between 0 and 10 are required');
+    const projectId = requireUuid(request.params.projectId, 'projectId');
+    const body = requireBody(request.body);
+    const studentId = requireUuid(body.studentId, 'studentId');
+    const score = body.score;
+    const comments = optionalString(body.comments, 'comments', 5000);
+    if (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 10) throw new AppError(422, 'VALIDATION_ERROR', 'score must be a number between 0 and 10');
     await assertProjectMember(projectId, user.id);
     const result = await getDatabase().query(
       `INSERT INTO evaluations (project_id, student_id, professor_id, score, comments)
@@ -44,7 +49,7 @@ evaluationRouter.post('/project/:projectId', requireRole('PROFESSOR'), async (re
       [projectId, studentId, user.id, score, comments]
     );
     if (!result.rows[0]) throw new AppError(404, 'STUDENT_NOT_FOUND', 'Student is not a member of this project');
-    response.status(201).json({ data: result.rows[0] });
+    response.status(201).json({ data: mapEvaluation(result.rows[0]) });
   } catch (error) {
     next(error);
   }

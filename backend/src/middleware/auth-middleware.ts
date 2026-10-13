@@ -1,12 +1,13 @@
 import type { NextFunction, Request, Response } from 'express';
-import { authenticateToken, type AuthUser, type Role } from '../auth.js';
+import { authenticateToken, loadCurrentUser, type AuthUser, type Role } from '../auth.js';
 import { AppError } from '../errors.js';
 
 type AuthenticatedRequest = Request & { user?: AuthUser };
 
-export function requireAuth(request: Request, _response: Response, next: NextFunction): void {
+export async function requireAuth(request: Request, _response: Response, next: NextFunction): Promise<void> {
   try {
-    (request as AuthenticatedRequest).user = authenticateToken(request.header('authorization'));
+    const tokenUser = authenticateToken(request.header('authorization'));
+    (request as AuthenticatedRequest).user = await loadCurrentUser(tokenUser.id);
     next();
   } catch (error) {
     next(error);
